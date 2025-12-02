@@ -83,3 +83,93 @@ class StatisticalTools():
             plt.show()
 
         return df, thresholds
+
+    def analyze_cdd_distribution(
+        precip: pd.Series,
+        dry_threshold: float = 1.0,
+        plot: bool = True
+    ):
+        """
+        Compute the distribution and inverse cumulative distribution of 
+        Consecutive Dry Days (CDD) from a daily precipitation time series.
+
+        Parameters
+        ----------
+        precip : pd.Series
+            Daily precipitation values in chronological order.
+        dry_threshold : float
+            Maximum precipitation (mm) to classify a day as "dry".
+        plot : bool
+            If True, plot CDF and inverse CDF.
+
+        Returns
+        -------
+        cdd_lengths : np.ndarray
+            Array of all dry spell lengths.
+        cdf : pd.DataFrame
+            DataFrame with columns ["CDD_length", "CDF"].
+        inv_cdf : pd.DataFrame
+            DataFrame with columns ["CDD_length", "ExceedanceProb"].
+        """
+
+        # 1. Identify dry days
+        dry = precip.values <= dry_threshold
+
+        # 2. Extract lengths of consecutive dry spells
+        cdd_lengths = []
+        current_length = 0
+
+        for is_dry in dry:
+            if is_dry:
+                current_length += 1
+            else:
+                if current_length > 0:
+                    cdd_lengths.append(current_length)
+                current_length = 0
+
+        # Catch trailing dry spell
+        if current_length > 0:
+            cdd_lengths.append(current_length)
+
+        cdd_lengths = np.array(cdd_lengths)
+        if len(cdd_lengths) == 0:
+            raise ValueError("No dry spells found with this threshold.")
+
+        # 3. Sort and compute empirical CDF
+        sorted_lengths = np.sort(cdd_lengths)
+        cdf_vals = np.arange(1, len(sorted_lengths) + 1) / len(sorted_lengths)
+
+        cdf = pd.DataFrame({
+            "CDD_length": sorted_lengths,
+            "CDF": cdf_vals
+        })
+
+        # 4. Compute inverse CDF (exceedance probability)
+        exceedance = 1 - cdf_vals
+        inv_cdf = pd.DataFrame({
+            "CDD_length": sorted_lengths,
+            "ExceedanceProb": exceedance
+        })
+
+        # 5. Optional: plotting
+        if plot:
+            fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+
+            # CDF plot
+            ax[0].plot(sorted_lengths, cdf_vals)
+            ax[0].set_xlabel("CDD length (days)")
+            ax[0].set_ylabel("CDF")
+            ax[0].set_title("Cumulative Distribution of CDD")
+            ax[0].grid(True)
+
+            # Inverse CDF (Exceedance) plot
+            ax[1].plot(sorted_lengths, exceedance)
+            ax[1].set_xlabel("CDD length (days)")
+            ax[1].set_ylabel("P(CDD > x)")
+            ax[1].set_title("Inverse CDF (Exceedance Probability)")
+            ax[1].grid(True)
+
+            plt.tight_layout()
+            plt.show()
+
+        return cdd_lengths, cdf, inv_cdf
