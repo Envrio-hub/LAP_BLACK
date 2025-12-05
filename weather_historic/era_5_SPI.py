@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 from statistical_tools import StatisticalTools
-from scipy.stats import ks_2samp  
+from scipy.stats import ks_2samp, anderson_ksamp
 
 # Calculate Relative Humidity from ERA5 single level
 
@@ -50,10 +50,16 @@ periods = [period_I, period_II, period_III]
 period_pairs= [(period_I, period_II), (period_I, period_III), (period_II, period_III)]
 
 Kolmogorov_Smirnov = pd.DataFrame()
-for pair in period_pairs:
+Anderson_Darling = pd.DataFrame()
+for label, pair in zip(period_labels, period_pairs):
     stat, p = ks_2samp(pair[0], pair[1])
-    Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov, pd.DataFrame(data={'KS_Statistic':[stat],'p_value':[p]},
-                                                                 index=[f"{period_labels[periods.index(pair[0])]} vs {period_labels[periods.index(pair[1])]}"])])
+    Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov,
+                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,2)}, index=[label])], axis=0)
+    result = anderson_ksamp([pair[0], pair[1]])
+    print(result.pvalue)
+    Anderson_Darling = pd.concat([Anderson_Darling, pd.DataFrame(data={'statistic':result.statistic,
+                                                                       'critical_values':result.critical_values,
+                                                                       'pvalue':result.pvalue})], axis=0)
 
 # Compute percentiles
 percentiles = []
@@ -83,6 +89,34 @@ for label, (p5, p95, prob5, prob95) in zip(period_labels, percentiles):
     print(f"  SPI 5th  percentile value = {p5:.3f}, CDF ≈ {prob5:.3f}")
     print(f"  SPI 95th percentile value = {p95:.3f}, CDF ≈ {prob95:.3f}")
     print()
+
+tails_5th = [(period_I[period_I<percentiles[0][0]], period_II[period_II<percentiles[1][0]]),
+             (period_I[period_I<percentiles[0][0]], period_III[period_III<percentiles[2][0]]),
+             (period_II[period_II<percentiles[1][0]], period_III[period_III<percentiles[2][0]])]
+
+Kolmogorov_Smirnov_5th = pd.DataFrame()
+Anderson_Darling_5th = pd.DataFrame()
+for label, pair in zip(period_labels, tails_5th):
+    stat, p = ks_2samp(pair[0], pair[1])
+    Kolmogorov_Smirnov_5th = pd.concat([Kolmogorov_Smirnov_5th,
+                                    pd.DataFrame(data={'KS_Statistic':[round(stat,2)],'p_value':[round(p,2)]}, index=[label])], axis=0)
+    result = anderson_ksamp([pair[0], pair[1]])
+    print(result.statistic)
+    Anderson_Darling_5th = pd.concat([Anderson_Darling_5th, pd.DataFrame(data={'AD_Statistic':[result]}, index=[label])], axis=0)
+
+tails_95th = [(period_I[period_I<percentiles[0][1]], period_II[period_II<percentiles[1][1]]),
+             (period_I[period_I<percentiles[0][1]], period_III[period_III<percentiles[2][1]]),
+             (period_II[period_II<percentiles[1][1]], period_III[period_III<percentiles[2][1]])]
+
+Kolmogorov_Smirnov_95th = pd.DataFrame()
+Anderson_Darling_95th = pd.DataFrame()
+for label, pair in zip(period_labels, tails_95th):
+    stat, p = ks_2samp(pair[0], pair[1])
+    Kolmogorov_Smirnov_95th = pd.concat([Kolmogorov_Smirnov_95th,
+                                    pd.DataFrame(data={'KS_Statistic':[round(stat,2)],'p_value':[round(p,2)]}, index=[label])], axis=0)
+    result = anderson_ksamp([pair[0], pair[1]])
+    print(result)
+    Anderson_Darling_95th = pd.concat([Anderson_Darling_95th, pd.DataFrame(data={'AD_Statistic':[result]}, index=[label])], axis=0)
 
 # Plot ECDFs with vertical percentile lines
 plt.figure(figsize=(10, 6))
