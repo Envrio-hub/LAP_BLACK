@@ -4,7 +4,6 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 from statistical_tools import StatisticalTools
-from scipy.stats import ks_2samp  
 
 # Calculate Relative Humidity from ERA5 single level
 
@@ -20,43 +19,47 @@ start_timestamp = 0
 end_timestamp =  1735680000.0
 
 # Gettin Air Temperature data
-measurement = "tp"
+measurements = ["tp", "t2m", "d2m", "v10", "u10", "ssrd"]
 
-params = {
-    "measurement": measurement,
-    "longitude": longitude,
-    "latitude": latitude,
-    "start_timestamp": start_timestamp,
-    "end_timestamp": end_timestamp
-}
+df = pd.DataFrame()
+for measurement in measurements:
+    params = {
+        "measurement": measurement,
+        "longitude": longitude,
+        "latitude": latitude,
+        "start_timestamp": start_timestamp,
+        "end_timestamp": end_timestamp
+    }
 
-start = datetime.now()
-response = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
-print(f'Duration: {datetime.now()-start}')
-df = pd.DataFrame(data={"tp":[x*1000 for x in response.json()['data']['value']],
-                        'date_time':[datetime.fromtimestamp(dt) for dt in response.json()['data']['timestamp']]},
-                  index=[datetime.fromtimestamp(dt) for dt in response.json()['data']['timestamp']]) if response.status_code==200 else None
+    start = datetime.now()
+    response = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
+    print(f'Duration: {datetime.now()-start}')
+    if response.status_code == 200:
+        timestamps = [datetime.fromtimestamp(dt) for dt in response.json()['data']['timestamp']]
+        values = response.json()['data']['value']
+        df = pd.concat([df, pd.DataFrame(data={measurement: values}, index=timestamps)[[measurement]]], axis=1)
+
+
+# Define Relative Humidity as a Helper Function
+def relative_humidity(T, Td):
+    es = 6.112 * np.exp((17.67 * T) / (T + 243.5))
+    e = 6.112 * np.exp((17.67 * Td) / (Td + 243.5))
+    RH = round(100 * (e / es), 2)
+    return RH
 
 stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
 
 spi = stats.compute_spi()
 
-period_labels = ["1971–2000", "1981–2010", "1991–2020"]
 period_I = spi[(spi.index>datetime(1970,12,31)) & (spi.index<datetime(2001,1,1))]
 period_II = spi[(spi.index>datetime(1980,12,31)) & (spi.index<datetime(2011,1,1))]
 period_III = spi[(spi.index>datetime(1990,12,31)) & (spi.index<datetime(2021,1,1))]
 
 periods = [period_I, period_II, period_III]
-period_pairs= [(period_I, period_II), (period_I, period_III), (period_II, period_III)]
-
-Kolmogorov_Smirnov = pd.DataFrame()
-for pair in period_pairs:
-    stat, p = ks_2samp(pair[0], pair[1])
-    Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov, pd.DataFrame(data={'KS_Statistic':[stat],'p_value':[p]},
-                                                                 index=[f"{period_labels[periods.index(pair[0])]} vs {period_labels[periods.index(pair[1])]}"])])
 
 # Compute percentiles
 percentiles = []
+period_labels = ["1971–2000", "1981–2010", "1991–2020"]
 colors = ["tab:blue", "tab:orange", "tab:green"]
 
 for w in periods:

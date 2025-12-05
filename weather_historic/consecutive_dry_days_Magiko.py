@@ -1,9 +1,6 @@
-import requests
 import matplotlib.pyplot as plt
-from datetime import datetime
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from glob import glob
 import os
 

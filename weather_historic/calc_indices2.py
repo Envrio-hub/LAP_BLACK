@@ -54,7 +54,7 @@ data["d2m"] = [round(x-273.15,1) for x in response.json()['data']['value']]
 def relative_humidity(T, Td):
     es = 6.112 * np.exp((17.67 * T) / (T + 243.5))
     e = 6.112 * np.exp((17.67 * Td) / (Td + 243.5))
-    RH = round(100 * (e / es),2)
+    RH = round(100 * (e / es), 2)
     return RH
 
 data['rh'] = relative_humidity(data["t2m"], data["d2m"])
