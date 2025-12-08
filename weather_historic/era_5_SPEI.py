@@ -4,6 +4,7 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 from statistical_tools import StatisticalTools
+from scipy.stats import ks_2samp, anderson_ksamp
 
 # Calculate Relative Humidity from ERA5 single level
 
@@ -15,47 +16,78 @@ headers = {"Authorization": f'Bearer {auth.json()["access_token"]}'}
 
 longitude = 24.40
 latitude = 40.93
-start_timestamp = 0
-end_timestamp =  1735680000.0
-
-# Gettin Air Temperature data
-measurements = ["tp", "t2m", "d2m", "v10", "u10", "ssrd"]
+start_timestamps = [0, datetime(1990,1,1,0).timestamp(), datetime(2010,1,1,0).timestamp()]
+end_timestamps =  [datetime(1989,12,31,23,30).timestamp(), datetime(2009,12,31,23,30).timestamp(), datetime(2024,12,31,23,30).timestamp()]
+elev = 45
 
 df = pd.DataFrame()
-for measurement in measurements:
+
+for start_timestamp, end_timestamp in zip(start_timestamps, end_timestamps):
+
     params = {
-        "measurement": measurement,
         "longitude": longitude,
         "latitude": latitude,
         "start_timestamp": start_timestamp,
-        "end_timestamp": end_timestamp
+        "end_timestamp": end_timestamp,
+        "elev":elev
+    }
+
+    start = datetime.now()
+    response = requests.get(f'{base_url}/evapotranspiration', headers=headers, params=params)
+    print(f'ETo series created in : {datetime.now()-start}')
+
+    df = pd.concat([df, pd.DataFrame({"pet":response.json()['ET_Daily']['values']},
+                                     index=pd.to_datetime(response.json()['ET_Daily']['timestamp'], unit='s', utc=True))],
+                   axis=0)
+
+# Gettin Air Temperature data
+measurements = ["tp"]
+
+
+for measurement in measurements:
+    params = {
+        "measurements": measurement,
+        "longitude": longitude,
+        "latitude": latitude,
+        "start_timestamp": start_timestamps[0],
+        "end_timestamp": end_timestamps[2]
     }
 
     start = datetime.now()
     response = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
     print(f'Duration: {datetime.now()-start}')
     if response.status_code == 200:
-        timestamps = [datetime.fromtimestamp(dt) for dt in response.json()['data']['timestamp']]
-        values = response.json()['data']['value']
-        df = pd.concat([df, pd.DataFrame(data={measurement: values}, index=timestamps)[[measurement]]], axis=1)
+        timestamps = response.json()['tp']['data']['timestamp']
+        values = response.json()['tp']['data']['value']
+        df_hourly = pd.DataFrame(data={measurement: values}, index=pd.to_datetime(timestamps, unit='s', utc=True))
+        df_daily = df_hourly.resample('D').sum()
+        df = pd.concat([df, df_daily], axis=1)
 
-
-# Define Relative Humidity as a Helper Function
-def relative_humidity(T, Td):
-    es = 6.112 * np.exp((17.67 * T) / (T + 243.5))
-    e = 6.112 * np.exp((17.67 * Td) / (Td + 243.5))
-    RH = round(100 * (e / es), 2)
-    return RH
+df['date_time'] = pd.to_datetime(df.index, format='%Y-%m-%d %H:%M', utc=True)
 
 stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
 
-spi = stats.compute_spi()
+spei = stats.compute_spei()
 
-period_I = spi[(spi.index>datetime(1970,12,31)) & (spi.index<datetime(2001,1,1))]
-period_II = spi[(spi.index>datetime(1980,12,31)) & (spi.index<datetime(2011,1,1))]
-period_III = spi[(spi.index>datetime(1990,12,31)) & (spi.index<datetime(2021,1,1))]
+period_labels = ["1971–2000 vs 1981–2010", "1981–2010 vs 1991–2020", "1971–2000 vs 1991–2020"]
+period_I = spei[(spei.index>pd.to_datetime('1970-12-31', utc=True)) & (spei.index<pd.to_datetime('2001-01-01', utc=True))]
+period_II = spei[(spei.index>pd.to_datetime('1980-12-31', utc=True)) & (spei.index<pd.to_datetime('2011-1-1', utc=True))]
+period_III = spei[(spei.index>pd.to_datetime('1990-12-31', utc=True)) & (spei.index<pd.to_datetime('2021-1-1', utc=True))]
 
 periods = [period_I, period_II, period_III]
+period_pairs= [(period_I, period_II), (period_I, period_III), (period_II, period_III)]
+
+Kolmogorov_Smirnov = pd.DataFrame()
+Anderson_Darling = pd.DataFrame()
+for label, pair in zip(period_labels, period_pairs):
+    stat, p = ks_2samp(pair[0], pair[1])
+    Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov,
+                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,3)}, index=[label])], axis=0)
+    result = anderson_ksamp([pair[0], pair[1]])
+    print(result.pvalue)
+    Anderson_Darling = pd.concat([Anderson_Darling, pd.DataFrame(data={'statistic':result.statistic,
+                                                                       'critical_values':result.critical_values,
+                                                                       'pvalue':result.pvalue})], axis=0)
 
 # Compute percentiles
 percentiles = []

@@ -276,7 +276,6 @@ class StatisticalTools():
     
     def compute_spei(
             self,
-            pet: pd.Series,
             scale: int = 3,
             calib_start: str | None = None,
             calib_end: str | None = None
@@ -302,11 +301,9 @@ class StatisticalTools():
         spei : pd.Series
             SPEI time series (same index as the accumulated series).
         """
-        # Align series
-        precip, pet = self.precip.sort_index().align(pet.sort_index(), join="inner")
 
         # Climatic water balance
-        D = precip - pet
+        D = self.df[self.precip_col] - self.df['pet']
 
         # Accumulate to the chosen time scale
         accD = D.rolling(window=scale, min_periods=scale).sum()
