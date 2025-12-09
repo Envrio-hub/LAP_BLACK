@@ -6,6 +6,30 @@ import matplotlib.pyplot as plt
 from statistical_tools import StatisticalTools
 from scipy.stats import ks_2samp, anderson_ksamp
 
+# Helper function to classify drought from percentile
+def classify_drought_from_percentile(p):
+    """
+    Drought classes based on percentile relative to reference distribution.
+    Thresholds are chosen to approximate the usual SPI/SPEI categories.
+    """
+    if np.isnan(p):
+        return np.nan
+
+    if p <= 0.02:
+        return "Extreme drought"
+    elif p <= 0.05:
+        return "Severe drought"
+    elif p <= 0.10:
+        return "Moderate drought"
+    elif p < 0.90:
+        return "Near normal"
+    elif p < 0.95:
+        return "Moderately wet"
+    elif p < 0.98:
+        return "Very wet"
+    else:
+        return "Extremely wet"
+    
 # Calculate Relative Humidity from ERA5 single level
 
 base_url = "https://envrio.org/era5_api"
@@ -17,7 +41,7 @@ headers = {"Authorization": f'Bearer {auth.json()["access_token"]}'}
 longitude = 24.40
 latitude = 40.93
 start_timestamp = 0
-end_timestamp =  datetime(2024,12,31,23).timestamp() 1735680000.0
+end_timestamp =  datetime(2024,12,31,23).timestamp()
 
 # Gettin Air Temperature data
 measurement = ["tp"]
@@ -67,27 +91,6 @@ out = pd.DataFrame(
 
 out["drought_class"] = [classify_drought_from_percentile(p) for p in out["percentile"]]
 
-def classify_drought_from_percentile(p):
-    """
-    Drought classes based on percentile relative to reference distribution.
-    Thresholds are chosen to approximate the usual SPI/SPEI categories.
-    """
-    if np.isnan(p):
-        return np.nan
-
-    if p <= 0.02:
-        return "Extreme drought"
-    elif p <= 0.05:
-        return "Severe drought"
-    elif p <= 0.10:
-        return "Moderate drought"
-    elif p < 0.90:
-        return "Near normal"
-    elif p < 0.95:
-        return "Moderately wet"
-    elif p < 0.98:
-        return "Very wet"
-    else:
-        return "Extremely wet"
+print(out)
     
 print()
