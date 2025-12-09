@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
-from eto_fao56 import eto_fao56
 
 class StatisticalTools():
 

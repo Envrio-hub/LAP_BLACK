@@ -20,10 +20,10 @@ start_timestamp = 0
 end_timestamp =  1735680000.0
 
 # Gettin Air Temperature data
-measurement = "tp"
+measurement = ["tp"]
 
 params = {
-    "measurement": measurement,
+    "measurements": measurement,
     "longitude": longitude,
     "latitude": latitude,
     "start_timestamp": start_timestamp,
@@ -41,13 +41,12 @@ stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m
 
 spi = stats.compute_spi(scale=12)
 
-period_labels = ["1971–2000 vs 1981–2010", "1981–2010 vs 1991–2020", "1971–2000 vs 1991–2020"]
-period_I = spi[(spi.index>pd.to_datetime('1970-12-31', utc=True)) & (spi.index<pd.to_datetime('2001-01-01', utc=True))]
-period_II = spi[(spi.index>pd.to_datetime('1980-12-31', utc=True)) & (spi.index<pd.to_datetime('2011-1-1', utc=True))]
-period_III = spi[(spi.index>pd.to_datetime('1990-12-31', utc=True)) & (spi.index<pd.to_datetime('2021-1-1', utc=True))]
+period_labels = ["1991–2020", "2021-2024"]
+period_reference = spi[(spi.index>pd.to_datetime('1990-12-31', utc=True)) & (spi.index<pd.to_datetime('2021-1-1', utc=True))]
+period_now = spi[spi.index>pd.to_datetime('2020-12-31', utc=True)]
 
-periods = [period_I, period_II, period_III]
-period_pairs= [(period_I, period_II), (period_I, period_III), (period_II, period_III)]
+periods = [period_reference, period_now]
+period_pairs= [(period_reference, period_now)]
 
 Kolmogorov_Smirnov = pd.DataFrame()
 Anderson_Darling = pd.DataFrame()

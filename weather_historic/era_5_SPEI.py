@@ -67,7 +67,7 @@ df['date_time'] = pd.to_datetime(df.index, format='%Y-%m-%d %H:%M', utc=True)
 
 stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
 
-spei = stats.compute_spei()
+spei = stats.compute_spei(scale=3)
 
 period_labels = ["1971–2000 vs 1981–2010", "1981–2010 vs 1991–2020", "1971–2000 vs 1991–2020"]
 period_I = spei[(spei.index>pd.to_datetime('1970-12-31', utc=True)) & (spei.index<pd.to_datetime('2001-01-01', utc=True))]
@@ -82,7 +82,7 @@ Anderson_Darling = pd.DataFrame()
 for label, pair in zip(period_labels, period_pairs):
     stat, p = ks_2samp(pair[0], pair[1])
     Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov,
-                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,3)}, index=[label])], axis=0)
+                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,4)}, index=[label])], axis=0)
     result = anderson_ksamp([pair[0], pair[1]])
     print(result.pvalue)
     Anderson_Darling = pd.concat([Anderson_Darling, pd.DataFrame(data={'statistic':result.statistic,
@@ -91,13 +91,12 @@ for label, pair in zip(period_labels, period_pairs):
 
 # Compute percentiles
 percentiles = []
-period_labels = ["1971–2000", "1981–2010", "1991–2020"]
 colors = ["tab:blue", "tab:orange", "tab:green"]
 
 for w in periods:
     w = w.dropna().values  # clean array
 
-    # SPI values at the 5th and 95th percentiles
+    # SPEI values at the 5th and 95th percentiles
     p5  = np.percentile(w, 5)
     p95 = np.percentile(w, 95)
 
@@ -106,7 +105,7 @@ for w in periods:
     ecdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
 
     # Cumulative probabilities corresponding to p5 and p95
-    # (first ECDF value where SPI >= threshold)
+    # (first ECDF value where SPEI >= threshold)
     prob5  = ecdf[sorted_vals >= p5][0]
     prob95 = ecdf[sorted_vals >= p95][0]
 
@@ -115,14 +114,16 @@ for w in periods:
 # Print table of results
 for label, (p5, p95, prob5, prob95) in zip(period_labels, percentiles):
     print(f"{label}:")
-    print(f"  SPI 5th  percentile value = {p5:.3f}, CDF ≈ {prob5:.3f}")
-    print(f"  SPI 95th percentile value = {p95:.3f}, CDF ≈ {prob95:.3f}")
+    print(f"  SPEI 5th  percentile value = {p5:.3f}, CDF ≈ {prob5:.3f}")
+    print(f"  SPEI 95th percentile value = {p95:.3f}, CDF ≈ {prob95:.3f}")
     print()
 
 # Plot ECDFs with vertical percentile lines
 plt.figure(figsize=(10, 6))
 
-for (w_series, label, (p5, p95, prob5, prob95), color) in zip(periods, period_labels, percentiles, colors):
+thirty_years_period_labels = ["1971–2000", "1981–2010", "1991–2020"]
+
+for (w_series, label, (p5, p95, prob5, prob95), color) in zip(periods, thirty_years_period_labels, percentiles, colors):
     w = w_series.dropna().values
     sorted_vals = np.sort(w)
     ecdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
@@ -131,9 +132,9 @@ for (w_series, label, (p5, p95, prob5, prob95), color) in zip(periods, period_la
     plt.axvline(p5,  linestyle="--", color=color, alpha=0.6)
     plt.axvline(p95, linestyle="--", color=color, alpha=0.6)
 
-plt.xlabel("SPI")
+plt.xlabel("SPEI")
 plt.ylabel("Cumulative probability")
-plt.title("SPI ECDFs with 5th and 95th percentiles")
+plt.title("SPEI ECDFs with 5th and 95th percentiles")
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
@@ -153,19 +154,19 @@ for i, p, anchor in zip(range(0,len(periods)), periods, anchors):
     below_5th = p<percentiles[i][0]
 
     # ----------------------------------------------------
-    # 2. Annual counts of SPI events below the 5th percentile
+    # 2. Annual counts of SPEI events below the 5th percentile
     # ----------------------------------------------------
-    # Boolean mask: True when SPI is below the 5th percentile
+    # Boolean mask: True when SPEI is below the 5th percentile
     # Count per calendar year
     annual = below_5th.groupby(below_5th.index.year).sum().astype(int)
     annual.name = 'count_below_5th'
     annual_counts.append(annual)
 
-    print("\nAnnual counts of SPI period_{i} < 5th percentile:")
+    print("\nAnnual counts of SPEI period_{i} < 5th percentile:")
     print(annual)
 
     # ----------------------------------------------------
-    # 3. Non-overlapping 5-year block counts of SPI < 5th percentile
+    # 3. Non-overlapping 5-year block counts of SPEI < 5th percentile
     #    Example blocks: 1980–1984, 1985–1989, ...
     # ----------------------------------------------------
     years = below_5th.index.year
@@ -185,7 +186,7 @@ for i, p, anchor in zip(range(0,len(periods)), periods, anchors):
     block_counts = below_5th.groupby(block_start_year).sum().astype(int)
     block_counts.name = 'count_below_5th_5yr_block'
 
-    print("\n5-year block counts of SPI < 5th percentile (non-overlapping):")
+    print("\n5-year block counts of SPEI < 5th percentile (non-overlapping):")
     print(block_counts)
 
     # ----------------------------------------------------
