@@ -8,11 +8,37 @@ class StatisticalTools():
     def __init__(self, data_frame: pd.DataFrame = None, csv_path: str = None, date_col: str = "date", date_format: str = "%Y-%m-%d", precip_col: str = "precip"):
         # Read and clean data
         df = pd.read_csv(csv_path) if csv_path else data_frame
-        df[date_col] = pd.to_datetime(df[date_col], format=date_format)
+        if date_col not in df.columns:
+            df[date_col] = pd.to_datetime(df[date_col], format=date_format)
         df.index = df[date_col]
         df = df.drop(columns=[date_col])
         self.df = df.sort_values(date_col)
         self.precip_col = precip_col
+
+    def aridity_index(self, pet_col: str = "pet") -> pd.Series:
+        """
+        Compute Aridity Index (AI) as the ratio of the mean annual potential evapotranspiration (PET)
+        to mean annual precipitation.
+
+        Returns
+        -------
+        ai : pd Series
+            Aridity Index value.
+        """
+        # Resample to annual sums
+        annual_precip = self.df[self.precip_col].resample('YE').sum()*1000
+        annual_pet = self.df[pet_col].resample('YE').sum()
+
+        # Compute means
+        # mean_precip = annual_precip.mean()
+        mean_pet = annual_pet.mean()
+
+        if mean_pet == 0:
+            raise ValueError("Mean annual PET is zero, cannot compute Aridity Index.")
+
+        ai = annual_pet / annual_precip
+
+        return ai
 
     def analyze_precip_extremes(
         self,
@@ -78,11 +104,9 @@ class StatisticalTools():
 
         return self.df, thresholds
 
-    def analyze_extreme_drought(
+    def extreme_drought(
         self,
-        dry_threshold: float = 1.0,
-        plot: bool = True
-    ):
+        dry_threshold: float = 1.0):
         """
         Compute the distribution and inverse cumulative distribution of 
         Consecutive Dry Days (CDD) from a daily precipitation time series.
@@ -91,8 +115,6 @@ class StatisticalTools():
         ----------
         dry_threshold : float
             Maximum precipitation (mm) to classify a day as "dry".
-        plot : bool
-            If True, plot CDF and inverse CDF.
 
         Returns
         -------
@@ -143,27 +165,6 @@ class StatisticalTools():
             "CDD_length": sorted_lengths,
             "ExceedanceProb": exceedance
         })
-
-        # 5. Optional: plotting
-        if plot:
-            fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-
-            # CDF plot
-            ax[0].plot(sorted_lengths, cdf_vals)
-            ax[0].set_xlabel("CDD length (days)")
-            ax[0].set_ylabel("CDF")
-            ax[0].set_title("Cumulative Distribution of CDD")
-            ax[0].grid(True)
-
-            # Inverse CDF (Exceedance) plot
-            ax[1].plot(sorted_lengths, exceedance)
-            ax[1].set_xlabel("CDD length (days)")
-            ax[1].set_ylabel("P(CDD > x)")
-            ax[1].set_title("Inverse CDF (Exceedance Probability)")
-            ax[1].grid(True)
-
-            plt.tight_layout()
-            plt.show()
 
         return cdd_lengths, cdf, inv_cdf
     
