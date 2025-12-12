@@ -2,9 +2,9 @@ import requests
 import numpy as np
 from datetime import datetime
 import pandas as pd
-import matplotlib.pyplot as plt
 from statistical_tools import StatisticalTools
 from scipy.stats import ks_2samp, anderson_ksamp
+import matplotlib.pyplot as plt
 
 # Calculate Relative Humidity from ERA5 single level
 
@@ -67,27 +67,16 @@ df['date_time'] = pd.to_datetime(df.index, format='%Y-%m-%d %H:%M', utc=True)
 
 stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
 
-spei = stats.compute_spei(scale=3)
+spei = stats.compute_spei(scale=1)
 
-period_labels = ["1971–2000 vs 1981–2010", "1981–2010 vs 1991–2020", "1971–2000 vs 1991–2020"]
+period_labels = ["1971–2000", "1981–2010", "1991–2020"]
 period_I = spei[(spei.index>pd.to_datetime('1970-12-31', utc=True)) & (spei.index<pd.to_datetime('2001-01-01', utc=True))]
 period_II = spei[(spei.index>pd.to_datetime('1980-12-31', utc=True)) & (spei.index<pd.to_datetime('2011-1-1', utc=True))]
 period_III = spei[(spei.index>pd.to_datetime('1990-12-31', utc=True)) & (spei.index<pd.to_datetime('2021-1-1', utc=True))]
+period_IV = spei[spei.index>pd.to_datetime('2019-01-01', utc=True)]
 
 periods = [period_I, period_II, period_III]
 period_pairs= [(period_I, period_II), (period_I, period_III), (period_II, period_III)]
-
-Kolmogorov_Smirnov = pd.DataFrame()
-Anderson_Darling = pd.DataFrame()
-for label, pair in zip(period_labels, period_pairs):
-    stat, p = ks_2samp(pair[0], pair[1])
-    Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov,
-                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,4)}, index=[label])], axis=0)
-    result = anderson_ksamp([pair[0], pair[1]])
-    print(result.pvalue)
-    Anderson_Darling = pd.concat([Anderson_Darling, pd.DataFrame(data={'statistic':result.statistic,
-                                                                       'critical_values':result.critical_values,
-                                                                       'pvalue':result.pvalue})], axis=0)
 
 # Compute percentiles
 percentiles = []
@@ -117,6 +106,19 @@ for label, (p5, p95, prob5, prob95) in zip(period_labels, percentiles):
     print(f"  SPEI 5th  percentile value = {p5:.3f}, CDF ≈ {prob5:.3f}")
     print(f"  SPEI 95th percentile value = {p95:.3f}, CDF ≈ {prob95:.3f}")
     print()
+
+# Statistical tests between periods
+Kolmogorov_Smirnov = pd.DataFrame()
+Anderson_Darling = pd.DataFrame()
+for label, pair in zip(period_labels, period_pairs):
+    stat, p = ks_2samp(pair[0], pair[1])
+    Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov,
+                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,4)}, index=[label])], axis=0)
+    result = anderson_ksamp([pair[0], pair[1]])
+    print(result.pvalue)
+    Anderson_Darling = pd.concat([Anderson_Darling, pd.DataFrame(data={'statistic':result.statistic,
+                                                                       'critical_values':result.critical_values,
+                                                                       'pvalue':result.pvalue})], axis=0)
 
 # Plot ECDFs with vertical percentile lines
 plt.figure(figsize=(10, 6))

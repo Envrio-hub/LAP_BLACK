@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy import stats
+from scipy.stats import fisk, norm
+import matplotlib.pyplot as plt
 
 class StatisticalTools():
 
@@ -277,8 +278,9 @@ class StatisticalTools():
     def compute_spei(
             self,
             scale: int = 3,
-            calib_start: str | None = None,
-            calib_end: str | None = None
+            calibration_start: str | None = None,
+            calibration_end: str | None = None,
+            eps: float = 1e-12
             ) -> pd.Series:
         """
         Compute Standardized Precipitation Evapotranspiration Index (SPEI)
@@ -308,28 +310,32 @@ class StatisticalTools():
         # Accumulate to the chosen time scale
         accD = D.rolling(window=scale, min_periods=scale).sum()
 
-        # Calibration subset
-        if calib_start is not None and calib_end is not None:
-            calib = accD[calib_start:calib_end].dropna()
-        else:
-            calib = accD.dropna()
+        # Choose calibration subset (recommended for operational comparability)
+        cal = accD.copy()
+        if calibration_start is not None:
+            cal = cal[cal.index >= pd.to_datetime(calibration_start)]
+        if calibration_end is not None:
+            cal = cal[cal.index <= pd.to_datetime(calibration_end)]
 
-        if len(calib) < 30:
-            raise ValueError("Too few calibration values for Pearson III fit.")
+        spei = pd.Series(index=accD.index, dtype=float)
 
-        # Fit Pearson type III (can handle negative values)
-        skew, loc, scale_param = stats.pearson3.fit(calib.values)
+        # Fit distribution separately for each calendar month (seasonality handling)
+        for m in range(1, 13):
+            x_all = accD[accD.index.month == m].dropna()
+            x_cal = cal[cal.index.month == m].dropna()
 
-        # Compute CDF and convert to standard normal
-        spei_values = []
-        for x in accD:
-            if np.isnan(x):
-                spei_values.append(np.nan)
+            # Need enough points to fit; rule of thumb: >= 20–30
+            if len(x_cal) < 20:
+                spei.loc[x_all.index] = np.nan
                 continue
 
-            F = stats.pearson3.cdf(x, skew, loc=loc, scale=scale_param)
-            F = np.clip(F, 1e-6, 1 - 1e-6)
-            spei_values.append(stats.norm.ppf(F))
+            # Fit 3-parameter log-logistic: (shape=c, loc, scale)
+            c, loc, scale = fisk.fit(x_cal.values)
 
-        spei = pd.Series(spei_values, index=accD.index, name=f"SPEI-{scale}")
+            # Convert to CDF probabilities, then to standard normal quantiles
+            p = fisk.cdf(x_all.values, c, loc=loc, scale=scale)
+            p = np.clip(p, eps, 1 - eps)  # avoid inf values
+            spei.loc[x_all.index] = norm.ppf(p)
+
+        spei.name = f"SPEI_{scale}"
         return spei

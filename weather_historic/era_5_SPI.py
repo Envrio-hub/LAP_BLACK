@@ -16,42 +16,73 @@ headers = {"Authorization": f'Bearer {auth.json()["access_token"]}'}
 
 longitude = 24.40
 latitude = 40.93
-start_timestamp = 0
-end_timestamp =  1735680000.0
+start_timestamps = [0]
+end_timestamps = [ 1735680000.0]
 
 # Gettin Air Temperature data
-measurement = "tp"
+measurement = ["tp"]
 
 params = {
-    "measurement": measurement,
+    "measurements": measurement,
     "longitude": longitude,
     "latitude": latitude,
-    "start_timestamp": start_timestamp,
-    "end_timestamp": end_timestamp
+    "start_timestamp": start_timestamps[0],
+    "end_timestamp": end_timestamps[0]
 }
 
 start = datetime.now()
 response = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
 print(f'Duration: {datetime.now()-start}')
-df = pd.DataFrame(data={"tp":[x*1000 for x in response.json()['data']['value']],
-                        'date_time':[datetime.fromtimestamp(dt) for dt in response.json()['data']['timestamp']]},
-                  index=[datetime.fromtimestamp(dt) for dt in response.json()['data']['timestamp']]) if response.status_code==200 else None
+df = pd.DataFrame(data={"tp": np.array(response.json()['tp']['data']['value'])*1000,
+                        'date_time': pd.to_datetime(response.json()['tp']['data']['timestamp'], unit='s', utc=True)},
+                  index=pd.to_datetime(response.json()['tp']['data']['timestamp'], unit='s', utc=True)) if response.status_code==200 else None
 
 stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
 
 spi = stats.compute_spi(scale=12)
 
-period_labels = ["1971–2000 vs 1981–2010", "1981–2010 vs 1991–2020", "1971–2000 vs 1991–2020"]
+period_labels = ["1971–2000", "1981–2010", "1991–2020"]
 period_I = spi[(spi.index>pd.to_datetime('1970-12-31', utc=True)) & (spi.index<pd.to_datetime('2001-01-01', utc=True))]
 period_II = spi[(spi.index>pd.to_datetime('1980-12-31', utc=True)) & (spi.index<pd.to_datetime('2011-1-1', utc=True))]
 period_III = spi[(spi.index>pd.to_datetime('1990-12-31', utc=True)) & (spi.index<pd.to_datetime('2021-1-1', utc=True))]
+period_IV = spi[spi.index>pd.to_datetime('2019-01-01', utc=True)]
 
 periods = [period_I, period_II, period_III]
-period_pairs= [(period_I, period_II), (period_I, period_III), (period_II, period_III)]
 
+# Create CDFs
+cdf_list = []
+for period in periods:
+    sorted_vals = np.sort(period.dropna().values)
+    cdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
+    cdf_list.append(pd.DataFrame(data={'values':sorted_vals, 'cdf':cdf}))
+
+cdf_pairs = [(cdf_list[0]['values'], cdf_list[1]['values']),
+             (cdf_list[0]['values'], cdf_list[2]['values']),
+             (cdf_list[1]['values'], cdf_list[2]['values'])]
+
+# Compute percentiles
+percentiles = []
+colors = ["tab:blue", "tab:orange", "tab:green"]
+
+for cdf in cdf_list:
+
+    # SPI values at the 5th and 95th percentiles
+    p10  = np.percentile(cdf['values'], 10)
+    p90 = np.percentile(cdf['values'], 90)
+
+    percentiles.append((p10, p90))
+
+# Print table of results
+for label, (p10, p90) in zip(period_labels, percentiles):
+    print(f"{label}:")
+    print(f"  SPI 10th  percentile value = {p10:.3f}, CDF ≈ 0.10")
+    print(f"  SPI 90th percentile value = {p90:.3f}, CDF ≈ 0.90\n")
+    print()
+
+comparison_periods = ['1971–2000 vs 1981–2010', '1971–2000 vs 1991–2020', '1981–2010 vs 1991–2020']
 Kolmogorov_Smirnov = pd.DataFrame()
 Anderson_Darling = pd.DataFrame()
-for label, pair in zip(period_labels, period_pairs):
+for label, pair in zip(comparison_periods, cdf_pairs):
     stat, p = ks_2samp(pair[0], pair[1])
     Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov,
                                     pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,2)}, index=[label])], axis=0)
@@ -61,80 +92,19 @@ for label, pair in zip(period_labels, period_pairs):
                                                                        'critical_values':result.critical_values,
                                                                        'pvalue':result.pvalue})], axis=0)
 
-# Compute percentiles
-percentiles = []
-colors = ["tab:blue", "tab:orange", "tab:green"]
-
-for w in periods:
-    w = w.dropna().values  # clean array
-
-    # SPI values at the 5th and 95th percentiles
-    p5  = np.percentile(w, 5)
-    p95 = np.percentile(w, 95)
-
-    # Build ECDF
-    sorted_vals = np.sort(w)
-    ecdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
-
-    # Cumulative probabilities corresponding to p5 and p95
-    # (first ECDF value where SPI >= threshold)
-    prob5  = ecdf[sorted_vals >= p5][0]
-    prob95 = ecdf[sorted_vals >= p95][0]
-
-    percentiles.append((p5, p95, prob5, prob95))
-
-# Print table of results
-for label, (p5, p95, prob5, prob95) in zip(period_labels, percentiles):
-    print(f"{label}:")
-    print(f"  SPI 5th  percentile value = {p5:.3f}, CDF ≈ {prob5:.3f}")
-    print(f"  SPI 95th percentile value = {p95:.3f}, CDF ≈ {prob95:.3f}")
-    print()
-
-tails_5th = [(period_I[period_I<percentiles[0][0]], period_II[period_II<percentiles[1][0]]),
-             (period_I[period_I<percentiles[0][0]], period_III[period_III<percentiles[2][0]]),
-             (period_II[period_II<percentiles[1][0]], period_III[period_III<percentiles[2][0]])]
-
-Kolmogorov_Smirnov_5th = pd.DataFrame()
-Anderson_Darling_5th = pd.DataFrame()
-for label, pair in zip(period_labels, tails_5th):
-    stat, p = ks_2samp(pair[0], pair[1])
-    Kolmogorov_Smirnov_5th = pd.concat([Kolmogorov_Smirnov_5th,
-                                    pd.DataFrame(data={'KS_Statistic':[round(stat,2)],'p_value':[round(p,2)]}, index=[label])], axis=0)
-    result = anderson_ksamp([pair[0], pair[1]])
-    print(result.statistic)
-    Anderson_Darling_5th = pd.concat([Anderson_Darling_5th, pd.DataFrame(data={'AD_Statistic':[result]}, index=[label])], axis=0)
-
-tails_95th = [(period_I[period_I<percentiles[0][1]], period_II[period_II<percentiles[1][1]]),
-             (period_I[period_I<percentiles[0][1]], period_III[period_III<percentiles[2][1]]),
-             (period_II[period_II<percentiles[1][1]], period_III[period_III<percentiles[2][1]])]
-
-Kolmogorov_Smirnov_95th = pd.DataFrame()
-Anderson_Darling_95th = pd.DataFrame()
-for label, pair in zip(period_labels, tails_95th):
-    stat, p = ks_2samp(pair[0], pair[1])
-    Kolmogorov_Smirnov_95th = pd.concat([Kolmogorov_Smirnov_95th,
-                                    pd.DataFrame(data={'KS_Statistic':[round(stat,2)],'p_value':[round(p,2)]}, index=[label])], axis=0)
-    result = anderson_ksamp([pair[0], pair[1]])
-    print(result)
-    Anderson_Darling_95th = pd.concat([Anderson_Darling_95th, pd.DataFrame(data={'AD_Statistic':[result]}, index=[label])], axis=0)
 
 # Plot ECDFs with vertical percentile lines
 plt.figure(figsize=(10, 6))
 
-thirty_years_period_labels = ["1971–2000", "1981–2010", "1991–2020"]
+for (cdf, label, (p10, p90), color) in zip(cdf_list, period_labels, percentiles, colors):
 
-for (w_series, label, (p5, p95, prob5, prob95), color) in zip(periods, thirty_years_period_labels, percentiles, colors):
-    w = w_series.dropna().values
-    sorted_vals = np.sort(w)
-    ecdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
+    plt.plot(cdf['values'], cdf['cdf'], label=label, color=color, linewidth=1.5)
+    plt.axvline(p10,  linestyle="--", color=color, alpha=0.6)
+    plt.axvline(p90, linestyle="--", color=color, alpha=0.6)
 
-    plt.plot(sorted_vals, ecdf, label=label, color=color, linewidth=1.5)
-    plt.axvline(p5,  linestyle="--", color=color, alpha=0.6)
-    plt.axvline(p95, linestyle="--", color=color, alpha=0.6)
-
-plt.xlabel("SPI")
-plt.ylabel("Cumulative probability")
-plt.title("SPI ECDFs with 5th and 95th percentiles")
+plt.xlabel("SPI", fontsize=12, fontweight='bold')
+plt.ylabel("Cumulative probability", fontsize=12, fontweight='bold')
+plt.title("SPI-24 CDFs with 5th and 95th percentiles", fontsize=12)
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
@@ -215,5 +185,53 @@ for ax, pl, block_count in zip(axes, period_labels, five_year_block_counts):
     ax.grid(True, linestyle='--', alpha=0.5)
 
 plt.show()
+
+# Access period IV statistics
+years = ['2021', '2022', '2023', '2024']
+percentiles_IV = pd.DataFrame()
+for year in years:
+    period_year = period_IV[(period_IV.index.year==int(year))]
+    sorted_vals = np.sort(period_year.dropna().values)
+    cdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
+    cdf_list.append(pd.DataFrame(data={'values':sorted_vals, 'cdf':cdf}))
+
+    p10  = np.percentile(sorted_vals, 10)
+    p90 = np.percentile(sorted_vals, 90)
+
+    percentiles_IV = pd.concat([percentiles_IV, pd.DataFrame(data={'Year':year, '10th':p10, '90th':p90, 'CDF':0.10}, index=[year])], axis=0)
+
+    print(f'Year {year}: SPI 10th percentile value = {p10 :.3f}')
+    print(f'Year {year}: SPI 90th percentile value = {p90 :.3f}')
+
+# 7. Plot 2021-2024 over 1991-2020 baseline period.
+
+plt.step(cdf_list[2]['values'], cdf_list[2]['cdf'], where='post', label='1991–2020 CDF', color='tab:blue')
+plt.axvline(percentiles[2][0],  linestyle="--", color='tab:blue', alpha=0.6)
+
+# Recent years on same CDF
+plt.scatter(percentiles_IV["10th"],
+            percentiles_IV['CDF'],
+            label='2021–2024',
+            marker='o',
+            color='tab:orange')
+
+offsets = [(-12,7), (5,-10), (-15,7), (-30,-5)]
+# Annotate each point with its year
+for (_, row), offset in zip(percentiles_IV.iterrows(), offsets):
+    plt.annotate(
+        text=str(row["Year"]),              # text label
+        xy=(row["10th"], row["CDF"]),        # point to label
+        xytext=offset,                      # offset in pixels
+        textcoords="offset points",
+        fontsize=9
+    )
+
+plt.xlabel("SPI-6", fontsize=12, fontweight='bold')
+plt.ylabel("Cumulative Probability", fontsize=12, fontweight='bold')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
 
 print()

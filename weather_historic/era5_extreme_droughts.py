@@ -45,35 +45,107 @@ period_labels = ["1971-2000", "1981-2010", "1991-2020"]
 period_I = df_daily[(df_daily.index>pd.to_datetime('1970-12-31', utc=True)) & (df_daily.index<pd.to_datetime('2001-01-01', utc=True))]
 period_II = df_daily[(df_daily.index>pd.to_datetime('1980-12-31', utc=True)) & (df_daily.index<pd.to_datetime('2011-1-1', utc=True))]
 period_III = df_daily[(df_daily.index>pd.to_datetime('1990-12-31', utc=True)) & (df_daily.index<pd.to_datetime('2021-1-1', utc=True))]
-periods = [period_I, period_II, period_III
-           ]
+period_IV = df_daily[df_daily.index>pd.to_datetime('2020-12-31', utc=True)]
+periods = [period_I, period_II, period_III]
+
 # 3. Calculate extreme droughts based on maximum consecutive dry days (CDD)
-inv_csf_list = []
+inv_cdf_list = []
 for period, label in zip(periods, period_labels):
-    stats = StatisticalTools(data_frame=period, date_format='%Y-%m-%d %H:%M', precip_col='tp')
+    stats = StatisticalTools(data_frame=period, date_format='%Y-%m-%d', precip_col='tp')
     cdd_lengths, cdf, inv_csf = stats.extreme_drought(dry_threshold=1.0)
-    inv_csf_list.append((label, inv_csf))
+    inv_cdf_list.append(inv_csf)
 
+# 4. Compute percentiles
+percentiles = []
+colors = ["tab:blue", "tab:orange", "tab:green"]
 
-# 4. Plot inverse CDFs for each period
+for w in inv_cdf_list:
 
-# plt.figure(figsize=(10, 6))
+    # Cumulative probabilities corresponding to p5
+    # (first CDF value where EP < threshold)
+    p5  = np.min(w[w['ExceedanceProb'] < 5/100]['CDD_length'].iloc[0])
 
-# thirty_years_period_labels = ["1971–2000", "1981–2010", "1991–2020"]
+    percentiles.append((p5, 0.05))
 
-# for (w_series, label, (p10, p90, prob10, prob90), color) in zip(cdfs, thirty_years_period_labels, percentiles, colors):
-#     plt.plot(w_series[0], w_series[1], label=label, color=color, linewidth=1.5)
-#     plt.axvline(p10,  linestyle="--", color=color, alpha=0.6)
-#     plt.axvline(p90, linestyle="--", color=color, alpha=0.6)
+# Print table of results
+for label, (p5,prob5) in zip(period_labels, percentiles):
+    print(f"{label}:")
+    print(f" ED 5th  percentile value = {p5:.3f}, CDF ≈ {prob5:.3f}\n")
+    print()
 
-# plt.xlabel("CDD length (days)", fontsize=12, fontweight='bold')
-# plt.ylabel("P(CDD > x)", fontsize=12, fontweight='bold')
-# plt.title("Inverse CDF (Exceedance Probability)", fontsize=12)
-# plt.grid(True)
-# plt.legend()
-# plt.tight_layout()
-# plt.show()
+# 5. Assess statistical differences between periods
+inv_csf_pairs= [(inv_cdf_list[0], inv_cdf_list[1]), (inv_cdf_list[0], inv_cdf_list[2]), (inv_cdf_list[1], inv_cdf_list[2])]
+comparing_periods = ["1971–2000 vs 1981–2010", "1971–2000 vs 1991–2020", "1981–2010 vs 1991–2020"]
+Kolmogorov_Smirnov = pd.DataFrame()
+Anderson_Darling = pd.DataFrame()
+for label, pair in zip(comparing_periods, inv_csf_pairs):
+    stat, p = ks_2samp(pair[0]['CDD_length'], pair[1]['CDD_length'])
+    Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov,
+                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,2)}, index=[label])], axis=0)
+    result = anderson_ksamp([pair[0]['CDD_length'], pair[1]['CDD_length']])
+    print(result.pvalue)
+    Anderson_Darling = pd.concat([Anderson_Darling, pd.DataFrame(data={'statistic':result.statistic,
+                                                                       'critical_values':result.critical_values,
+                                                                       'pvalue':result.pvalue})], axis=0)
 
+# 6. Plot inverse CDFs for each period
 
+plt.figure(figsize=(10, 6))
+thirty_years_period_labels = ["1971–2000", "1981–2010", "1991–2020"]
+for (w_series, label, (p5, prob5), color) in zip(inv_cdf_list, thirty_years_period_labels, percentiles, colors):
+    plt.plot(w_series['CDD_length'], w_series['ExceedanceProb'], label=label, color=color, linewidth=1.5)
+    plt.axvline(p5,  linestyle="--", color=color, alpha=0.6)
+
+plt.xlabel("CDD length (days)", fontsize=12, fontweight='bold')
+plt.ylabel("Cumulative probability", fontsize=12, fontweight='bold')
+plt.title("Inverse CDF (Exceedance Probability)", fontsize=12)
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# 7. Calculate extreme droughts for 2021-2024.
+stats_IV = StatisticalTools(data_frame=period_IV, date_format='%Y-%m-%d', precip_col='tp')
+years = ['2021', '2022', '2023', '2024']
+percentiles_IV = pd.DataFrame()
+for year in years:
+    period_year = period_IV[(period_IV.index.year==int(year))]
+    stats_year = StatisticalTools(data_frame=period_year, date_format='%Y-%m-%d', precip_col='tp')
+    cdd_lengths, cdf, inv_cdf = stats_year.extreme_drought(dry_threshold=1.0)
+
+    p5  = inv_cdf[inv_cdf['ExceedanceProb'] < 5/100]['CDD_length'].iloc[0]
+
+    percentiles_IV = pd.concat([percentiles_IV, pd.DataFrame(data={'Year':year, 'CDD':p5, 'CDF':0.05}, index=[year])], axis=0)
+
+    print(f'Year {year}: ED 5th percentile value = {p5:.3f}')
+
+# 7. Plot 2021-2024 over 1991-2020 baseline period.
+
+plt.step(inv_cdf_list[2]['CDD_length'], inv_cdf_list[2]['ExceedanceProb'], where='post', label='1991–2020 CDF', color='tab:blue')
+plt.axvline(percentiles[2][0],  linestyle="--", color='tab:blue', alpha=0.6)
+
+# Recent years on same CDF
+plt.scatter(percentiles_IV["CDD"],
+            percentiles_IV['CDF'],
+            label='2021–2024',
+            marker='o',
+            color='tab:orange')
+
+# Annotate each point with its year
+for _, row in percentiles_IV.iterrows():
+    plt.annotate(
+        text=str(row["Year"]),              # text label
+        xy=(row["CDD"], row["CDF"]),        # point to label
+        xytext=(5, 5),                      # offset in pixels
+        textcoords="offset points",
+        fontsize=9
+    )
+
+plt.xlabel("CDD length (days)", fontsize=12, fontweight='bold')
+plt.ylabel("Cumulative Probability", fontsize=12, fontweight='bold')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
 
 print()
