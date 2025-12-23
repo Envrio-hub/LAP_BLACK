@@ -5,6 +5,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from statistical_tools import StatisticalTools
 from scipy.stats import ks_2samp, anderson_ksamp
+import xarray as xr
+from netCDF4 import Dataset
 
 # Calculate Relative Humidity from ERA5 single level
 
@@ -31,7 +33,7 @@ params = {
 }
 
 start = datetime.now()
-response = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
+response = requests.get(f'{base_url}/time_series_data_xarray', headers=headers, params=params)
 print(f'Duration: {datetime.now()-start}')
 df = pd.DataFrame(data={"tp": np.array(response.json()['tp']['data']['value'])*1000,
                         'date_time': pd.to_datetime(response.json()['tp']['data']['timestamp'], unit='s', utc=True)},
