@@ -1,3 +1,4 @@
 *.tif
 *.gpkg
 *.zip
+climate_projections/__pycache__
