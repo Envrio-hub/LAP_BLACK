@@ -5,6 +5,7 @@ import pandas as pd
 from statistical_tools import StatisticalTools
 from scipy.stats import ks_2samp, anderson_ksamp
 import matplotlib.pyplot as plt
+from spei import si
 
 # Calculate Relative Humidity from ERA5 single level
 
@@ -43,7 +44,6 @@ for start_timestamp, end_timestamp in zip(start_timestamps, end_timestamps):
 # Gettin Air Temperature data
 measurements = ["tp"]
 
-
 for measurement in measurements:
     params = {
         "measurements": measurement,
@@ -58,7 +58,7 @@ for measurement in measurements:
     print(f'Duration: {datetime.now()-start}')
     if response.status_code == 200:
         timestamps = response.json()['tp']['data']['timestamp']
-        values = response.json()['tp']['data']['value']
+        values = np.array(response.json()['tp']['data']['value'])*1000
         df_hourly = pd.DataFrame(data={measurement: values}, index=pd.to_datetime(timestamps, unit='s', utc=True))
         df_daily = df_hourly.resample('D').sum()
         df = pd.concat([df, df_daily], axis=1)
@@ -68,6 +68,7 @@ df['date_time'] = pd.to_datetime(df.index, format='%Y-%m-%d %H:%M', utc=True)
 stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
 
 spei = stats.compute_spei(scale=1)
+spei.index = pd.to_datetime(spei.index, utc=True)
 
 period_labels = ["1971–2000", "1981–2010", "1991–2020"]
 period_I = spei[(spei.index>pd.to_datetime('1970-12-31', utc=True)) & (spei.index<pd.to_datetime('2001-01-01', utc=True))]
@@ -76,146 +77,113 @@ period_III = spei[(spei.index>pd.to_datetime('1990-12-31', utc=True)) & (spei.in
 period_IV = spei[spei.index>pd.to_datetime('2019-01-01', utc=True)]
 
 periods = [period_I, period_II, period_III]
-period_pairs= [(period_I, period_II), (period_I, period_III), (period_II, period_III)]
+
+# Create CDFs
+cdf_list = []
+for period in periods:
+    sorted_vals = np.sort(period.dropna().values)
+    cdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
+    cdf_list.append(pd.DataFrame(data={'values':sorted_vals, 'cdf':cdf}))
+
+cdf_pairs = [(cdf_list[0]['values'], cdf_list[1]['values']),
+             (cdf_list[0]['values'], cdf_list[2]['values']),
+             (cdf_list[1]['values'], cdf_list[2]['values'])]
 
 # Compute percentiles
 percentiles = []
 colors = ["tab:blue", "tab:orange", "tab:green"]
 
-for w in periods:
-    w = w.dropna().values  # clean array
+for cdf in cdf_list:
 
-    # SPEI values at the 5th and 95th percentiles
-    p5  = np.percentile(w, 5)
-    p95 = np.percentile(w, 95)
+    # SPI values at the 5th and 95th percentiles
+    p10  = np.percentile(cdf['values'], 10)
+    p90 = np.percentile(cdf['values'], 90)
 
-    # Build ECDF
-    sorted_vals = np.sort(w)
-    ecdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
-
-    # Cumulative probabilities corresponding to p5 and p95
-    # (first ECDF value where SPEI >= threshold)
-    prob5  = ecdf[sorted_vals >= p5][0]
-    prob95 = ecdf[sorted_vals >= p95][0]
-
-    percentiles.append((p5, p95, prob5, prob95))
+    percentiles.append((p10, p90))
 
 # Print table of results
-for label, (p5, p95, prob5, prob95) in zip(period_labels, percentiles):
+for label, (p10, p90) in zip(period_labels, percentiles):
     print(f"{label}:")
-    print(f"  SPEI 5th  percentile value = {p5:.3f}, CDF ≈ {prob5:.3f}")
-    print(f"  SPEI 95th percentile value = {p95:.3f}, CDF ≈ {prob95:.3f}")
+    print(f"  SPI 10th  percentile value = {p10:.3f}, CDF ≈ 0.10")
+    print(f"  SPI 90th percentile value = {p90:.3f}, CDF ≈ 0.90\n")
     print()
 
-# Statistical tests between periods
+comparison_periods = ['1971–2000 vs 1981–2010', '1971–2000 vs 1991–2020', '1981–2010 vs 1991–2020']
 Kolmogorov_Smirnov = pd.DataFrame()
 Anderson_Darling = pd.DataFrame()
-for label, pair in zip(period_labels, period_pairs):
+for label, pair in zip(comparison_periods, cdf_pairs):
     stat, p = ks_2samp(pair[0], pair[1])
     Kolmogorov_Smirnov = pd.concat([Kolmogorov_Smirnov,
-                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,4)}, index=[label])], axis=0)
+                                    pd.DataFrame(data={'KS_Statistic':round(stat,2),'p_value':round(p,2)}, index=[label])], axis=0)
     result = anderson_ksamp([pair[0], pair[1]])
     print(result.pvalue)
     Anderson_Darling = pd.concat([Anderson_Darling, pd.DataFrame(data={'statistic':result.statistic,
                                                                        'critical_values':result.critical_values,
                                                                        'pvalue':result.pvalue})], axis=0)
 
+
 # Plot ECDFs with vertical percentile lines
 plt.figure(figsize=(10, 6))
 
-thirty_years_period_labels = ["1971–2000", "1981–2010", "1991–2020"]
+for (cdf, label, (p10, p90), color) in zip(cdf_list, period_labels, percentiles, colors):
 
-for (w_series, label, (p5, p95, prob5, prob95), color) in zip(periods, thirty_years_period_labels, percentiles, colors):
-    w = w_series.dropna().values
-    sorted_vals = np.sort(w)
-    ecdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
+    plt.plot(cdf['values'], cdf['cdf'], label=label, color=color, linewidth=1.5)
+    plt.axvline(p10,  linestyle="--", color=color, alpha=0.6)
+    plt.axvline(p90, linestyle="--", color=color, alpha=0.6)
 
-    plt.plot(sorted_vals, ecdf, label=label, color=color, linewidth=1.5)
-    plt.axvline(p5,  linestyle="--", color=color, alpha=0.6)
-    plt.axvline(p95, linestyle="--", color=color, alpha=0.6)
-
-plt.xlabel("SPEI")
-plt.ylabel("Cumulative probability")
-plt.title("SPEI ECDFs with 5th and 95th percentiles")
+plt.xlabel("SPEI", fontsize=12, fontweight='bold')
+plt.ylabel("Cumulative probability", fontsize=12, fontweight='bold')
+plt.title("SPEI-24 CDFs with 10th and 90th percentiles", fontsize=12)
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
 plt.show()
 
-annual_counts = []
+# Access period IV statistics
+years = ['2021', '2022', '2023', '2024']
+percentiles_IV = pd.DataFrame()
+for year in years:
+    period_year = period_IV[(period_IV.index.year==int(year))]
+    sorted_vals = np.sort(period_year.dropna().values)
+    cdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
+    cdf_list.append(pd.DataFrame(data={'values':sorted_vals, 'cdf':cdf}))
 
-five_year_block_counts = []
+    p10  = np.percentile(sorted_vals, 10)
+    p90 = np.percentile(sorted_vals, 90)
 
-anchors = [1971, 1981, 1991]
+    percentiles_IV = pd.concat([percentiles_IV, pd.DataFrame(data={'Year':year, '10th':p10, '90th':p90, 'CDF':0.10}, index=[year])], axis=0)
 
-for i, p, anchor in zip(range(0,len(periods)), periods, anchors):
+    print(f'Year {year}: SPI 10th percentile value = {p10 :.3f}')
+    print(f'Year {year}: SPI 90th percentile value = {p90 :.3f}')
 
-    # ----------------------------------------------------
-    # 1. Define the 5th percentile threshold
-    # ----------------------------------------------------
-    below_5th = p<percentiles[i][0]
+# 7. Plot 2021-2024 over 1991-2020 baseline period.
 
-    # ----------------------------------------------------
-    # 2. Annual counts of SPEI events below the 5th percentile
-    # ----------------------------------------------------
-    # Boolean mask: True when SPEI is below the 5th percentile
-    # Count per calendar year
-    annual = below_5th.groupby(below_5th.index.year).sum().astype(int)
-    annual.name = 'count_below_5th'
-    annual_counts.append(annual)
+plt.step(cdf_list[2]['values'], cdf_list[2]['cdf'], where='post', label='1991–2020 CDF', color='tab:blue')
+plt.axvline(percentiles[2][0],  linestyle="--", color='tab:blue', alpha=0.6)
 
-    print("\nAnnual counts of SPEI period_{i} < 5th percentile:")
-    print(annual)
+# Recent years on same CDF
+plt.scatter(percentiles_IV["10th"],
+            percentiles_IV['CDF'],
+            label='2021–2024',
+            marker='o',
+            color='tab:orange')
 
-    # ----------------------------------------------------
-    # 3. Non-overlapping 5-year block counts of SPEI < 5th percentile
-    #    Example blocks: 1980–1984, 1985–1989, ...
-    # ----------------------------------------------------
-    years = below_5th.index.year
+offsets = [(-12,7), (5,-10), (-15,7), (-30,-5)]
+# Annotate each point with its year
+for (_, row), offset in zip(percentiles_IV.iterrows(), offsets):
+    plt.annotate(
+        text=str(row["Year"]),              # text label
+        xy=(row["10th"], row["CDF"]),        # point to label
+        xytext=offset,                      # offset in pixels
+        textcoords="offset points",
+        fontsize=9
+    )
 
-    anchor = 1991  # first block starts at 1991–1995
-
-    # Compute block index: 0 for 1991–1995, 1 for 1996–2000, etc.
-    block_index = (years - anchor) // 5
-
-    # Define a "block start year" for each observation, e.g.:
-    # 1980–1984 -> 1980
-    # 1985–1989 -> 1985
-    # 1990–1994 -> 1990, etc.
-    block_start_year = anchor + 5 * block_index
-
-    # Put into a Series for grouping
-    block_counts = below_5th.groupby(block_start_year).sum().astype(int)
-    block_counts.name = 'count_below_5th_5yr_block'
-
-    print("\n5-year block counts of SPEI < 5th percentile (non-overlapping):")
-    print(block_counts)
-
-    # ----------------------------------------------------
-    # 4. (Optional) Reformat 5-year block labels as strings "YYYY–YYYY"
-    # ----------------------------------------------------
-    block_counts_labeled = block_counts.copy()
-    block_counts_labeled.index = [
-        f"{start_year}-{start_year+4}" for start_year in block_counts.index
-    ]
-    five_year_block_counts.append(block_counts_labeled)
-
-    print("\n5-year block counts with labeled intervals:")
-    print(block_counts_labeled)
-
-fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(10, 12), constrained_layout=True)
-
-for ax, pl, block_count in zip(axes, period_labels, five_year_block_counts):
-    x_pos = np.arange(len(block_count))
-
-    ax.plot(x_pos, block_count.values, marker='o')
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(block_count.index, rotation=45, ha='right')
-
-    ax.set_title(f"{pl}")
-    ax.set_ylabel("Event count")
-    ax.grid(True, linestyle='--', alpha=0.5)
-
+plt.xlabel("SPEI-6", fontsize=12, fontweight='bold')
+plt.ylabel("Cumulative Probability", fontsize=12, fontweight='bold')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
 plt.show()
 
 print()

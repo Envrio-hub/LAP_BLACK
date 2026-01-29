@@ -3,6 +3,7 @@ import numpy as np
 from scipy import stats
 from scipy.stats import fisk, norm
 import matplotlib.pyplot as plt
+from spei import si
 
 class StatisticalTools():
 
@@ -277,10 +278,7 @@ class StatisticalTools():
     
     def compute_spei(
             self,
-            scale: int = 3,
-            calibration_start: str | None = None,
-            calibration_end: str | None = None,
-            eps: float = 1e-12
+            scale: int = 3
             ) -> pd.Series:
         """
         Compute Standardized Precipitation Evapotranspiration Index (SPEI)
@@ -303,39 +301,41 @@ class StatisticalTools():
         spei : pd.Series
             SPEI time series (same index as the accumulated series).
         """
+        df = self.df.copy().resample('ME').sum()
 
         # Climatic water balance
-        D = self.df[self.precip_col] - self.df['pet']
+        D = df[self.precip_col] - df['pet']
+        D.index = D.index.tz_localize(None)
 
-        # Accumulate to the chosen time scale
-        accD = D.rolling(window=scale, min_periods=scale).sum()
+        # # Accumulate to the chosen time scale
+        # accD = D.rolling(window=scale, min_periods=scale).sum()
 
-        # Choose calibration subset (recommended for operational comparability)
-        cal = accD.copy()
-        if calibration_start is not None:
-            cal = cal[cal.index >= pd.to_datetime(calibration_start)]
-        if calibration_end is not None:
-            cal = cal[cal.index <= pd.to_datetime(calibration_end)]
+        # # Choose calibration subset (recommended for operational comparability)
+        # cal = accD.copy()
+        # if calibration_start is not None:
+        #     cal = cal[cal.index >= pd.to_datetime(calibration_start)]
+        # if calibration_end is not None:
+        #     cal = cal[cal.index <= pd.to_datetime(calibration_end)]
 
-        spei = pd.Series(index=accD.index, dtype=float)
+        # spei = pd.Series(index=accD.index, dtype=float)
 
-        # Fit distribution separately for each calendar month (seasonality handling)
-        for m in range(1, 13):
-            x_all = accD[accD.index.month == m].dropna()
-            x_cal = cal[cal.index.month == m].dropna()
+        # # Fit distribution separately for each calendar month (seasonality handling)
+        # for m in range(1, 13):
+        #     x_all = accD[accD.index.month == m].dropna()
+        #     x_cal = cal[cal.index.month == m].dropna()
 
-            # Need enough points to fit; rule of thumb: >= 20–30
-            if len(x_cal) < 20:
-                spei.loc[x_all.index] = np.nan
-                continue
+        #     # Need enough points to fit; rule of thumb: >= 20–30
+        #     if len(x_cal) < 20:
+        #         spei.loc[x_all.index] = np.nan
+        #         continue
 
-            # Fit 3-parameter log-logistic: (shape=c, loc, scale)
-            c, loc, scale = fisk.fit(x_cal.values)
+        #     # Fit 3-parameter log-logistic: (shape=c, loc, scale)
+        #     c, loc, scale = fisk.fit(x_cal.values)
 
-            # Convert to CDF probabilities, then to standard normal quantiles
-            p = fisk.cdf(x_all.values, c, loc=loc, scale=scale)
-            p = np.clip(p, eps, 1 - eps)  # avoid inf values
-            spei.loc[x_all.index] = norm.ppf(p)
+        #     # Convert to CDF probabilities, then to standard normal quantiles
+        #     p = fisk.cdf(x_all.values, c, loc=loc, scale=scale)
+        #     p = np.clip(p, eps, 1 - eps)  # avoid inf values
+        #     spei.loc[x_all.index] = norm.ppf(p)
 
-        spei.name = f"SPEI_{scale}"
-        return spei
+        # spei.name = f"SPEI_{scale}"
+        return si.spei(D, timescale=scale)
