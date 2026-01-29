@@ -19,7 +19,7 @@ headers = {"Authorization": f'Bearer {auth.json()["access_token"]}'}
 longitude = 24.40
 latitude = 40.93
 start_timestamps = [0]
-end_timestamps = [ 1735680000.0]
+end_timestamps = [1735680000.0]
 
 # Gettin Air Temperature data
 measurement = ["tp"]
@@ -33,7 +33,7 @@ params = {
 }
 
 start = datetime.now()
-response = requests.get(f'{base_url}/time_series_data_xarray', headers=headers, params=params)
+response = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
 print(f'Duration: {datetime.now()-start}')
 df = pd.DataFrame(data={"tp": np.array(response.json()['tp']['data']['value'])*1000,
                         'date_time': pd.to_datetime(response.json()['tp']['data']['timestamp'], unit='s', utc=True)},
@@ -41,12 +41,12 @@ df = pd.DataFrame(data={"tp": np.array(response.json()['tp']['data']['value'])*1
 
 stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
 
-spi = stats.compute_spi(scale=12)
+spi = stats.compute_spi(scale=6)
 
 period_labels = ["1971–2000", "1981–2010", "1991–2020"]
-period_I = spi[(spi.index>pd.to_datetime('1970-12-31', utc=True)) & (spi.index<pd.to_datetime('2001-01-01', utc=True))]
-period_II = spi[(spi.index>pd.to_datetime('1980-12-31', utc=True)) & (spi.index<pd.to_datetime('2011-1-1', utc=True))]
-period_III = spi[(spi.index>pd.to_datetime('1990-12-31', utc=True)) & (spi.index<pd.to_datetime('2021-1-1', utc=True))]
+period_I = spi[(spi.index>=pd.to_datetime('1971-1-1', utc=True)) & (spi.index<pd.to_datetime('2001-01-01', utc=True))]
+period_II = spi[(spi.index>=pd.to_datetime('1981-1-1', utc=True)) & (spi.index<pd.to_datetime('2011-1-1', utc=True))]
+period_III = spi[(spi.index>=pd.to_datetime('1991-1-1', utc=True)) & (spi.index<pd.to_datetime('2021-1-1', utc=True))]
 period_IV = spi[spi.index>pd.to_datetime('2019-01-01', utc=True)]
 
 periods = [period_I, period_II, period_III]

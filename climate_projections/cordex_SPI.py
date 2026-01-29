@@ -7,6 +7,47 @@ from statistical_tools import StatisticalTools
 from scipy.stats import ks_2samp, anderson_ksamp
 from decimal import Decimal, ROUND_HALF_UP
 
+# Define the SPI time sclale. Could be 1, 6, 24 for meteorological, agriculture and hydrological assessments.
+
+time_scale = 24
+
+# Calculate SPI for base 30-year period 1991-2020 based on ERA5 single levels dataset
+
+base_url = "https://envrio.org/era5_api"
+
+auth = requests.post(f'{base_url}/auth', json={"username":"xylopodaros@yahoo.gr","password":"TestPass123@123"})
+
+headers = {"Authorization": f'Bearer {auth.json()["access_token"]}'}
+
+longitude = 24.40
+latitude = 40.93
+start_timestamps = [int(datetime(1991,1,1).timestamp())]
+end_timestamps = [int(datetime(2020,12,31).timestamp())]
+
+# Gettin Air Temperature data
+measurement = ["tp"]
+
+params = {
+    "measurements": measurement,
+    "longitude": longitude,
+    "latitude": latitude,
+    "start_timestamp": start_timestamps[0],
+    "end_timestamp": end_timestamps[0]
+}
+
+start = datetime.now()
+response = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
+print(f'Duration: {datetime.now()-start}')
+era5_data = pd.DataFrame(data={"tp": np.array(response.json()['tp']['data']['value'])*1000,
+                               'date_time': pd.to_datetime(response.json()['tp']['data']['timestamp'], unit='s', utc=True)},
+                               index=pd.to_datetime(response.json()['tp']['data']['timestamp'], unit='s', utc=True)) if response.status_code==200 else None
+
+stats = StatisticalTools(data_frame=era5_data, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
+
+reference_spi = stats.compute_spi(scale=time_scale)
+
+# Calculate SPI for near and far future based on CORDEX climate projections
+
 base_url = 'https://envrio.org/cordex_api'
 
 # Step 1 - User authendication
@@ -31,13 +72,15 @@ nearest_data_point = requests.get(f'{base_url}/nearest_data_point', headers=head
 
 if nearest_data_point.json().get('Location ID'):
     location_id = nearest_data_point.json()['Location ID']
+    print(f'\nLocation ID: {location_id}\n')
+    location_id = 4445
 
 # Step 3 - Select a projection
 projections = requests.get(f'{base_url}/projections', headers=headers)
 for projection in projections.json():
     print(projection)
 
-projection_id = 1
+projection_id = 3
 
 # Step 4 - Select Data Products
 data_products = requests.get(f'{base_url}/data_products', headers=headers)
@@ -53,29 +96,30 @@ params = {
     "projection_id": projection_id,
     "location_id": location_id,
     "start_timestamp": int(datetime(2021,1,1).timestamp()),
-    "end_timestamp": int(datetime(2050,12,31,23,30).timestamp())
+    "end_timestamp": int(datetime(2100,12,31,23,30).timestamp())
 }
 
-data = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
+cordex_data = requests.get(f'{base_url}/time_series_data', headers=headers, params=params)
 
-df = pd.DataFrame.from_dict(data.json())
-df = df.rename(columns={"value":"tp"})
+cordex_df = pd.DataFrame.from_dict(cordex_data.json())
+cordex_df = cordex_df.rename(columns={"value":"tp"})
 
-df['date_time'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
-df = df.drop(columns=('timestamp'))
-df['tp'] = df['tp']*86400
+cordex_df['date_time'] = pd.to_datetime(cordex_df['timestamp'], unit='s', utc=True)
+cordex_df = cordex_df.drop(columns=('timestamp'))
+cordex_df['tp'] = cordex_df['tp']*86400
 
-stats = StatisticalTools(data_frame=df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
+stats = StatisticalTools(data_frame=cordex_df, date_col='date_time', date_format='%Y-%m-%d %H:%M', precip_col='tp')
 
-spi = stats.compute_spi(scale=12)
+cordex_spi = stats.compute_spi(scale=time_scale)
 
-period_labels = ["1971–2000", "1981–2010", "1991–2020"]
-period_I = spi[(spi.index>pd.to_datetime('1970-12-31', utc=True)) & (spi.index<pd.to_datetime('2001-01-01', utc=True))]
-period_II = spi[(spi.index>pd.to_datetime('1980-12-31', utc=True)) & (spi.index<pd.to_datetime('2011-1-1', utc=True))]
-period_III = spi[(spi.index>pd.to_datetime('1990-12-31', utc=True)) & (spi.index<pd.to_datetime('2021-1-1', utc=True))]
-period_IV = spi[spi.index>pd.to_datetime('2019-01-01', utc=True)]
+near_future = cordex_spi[cordex_spi.index<=pd.to_datetime('2050-12-31', utc=True)]
+far_future = cordex_spi[cordex_spi.index>=pd.to_datetime('2071-1-1', utc=True)]
 
-periods = [period_I, period_II, period_III]
+# Compare the SPI destributions between the reference, near and far future projections.
+
+period_labels = ["1991–2020", "2021-2050", "2071-2100"]
+
+periods = [reference_spi, near_future, far_future]
 
 # Create CDFs
 cdf_list = []
@@ -85,8 +129,7 @@ for period in periods:
     cdf_list.append(pd.DataFrame(data={'values':sorted_vals, 'cdf':cdf}))
 
 cdf_pairs = [(cdf_list[0]['values'], cdf_list[1]['values']),
-             (cdf_list[0]['values'], cdf_list[2]['values']),
-             (cdf_list[1]['values'], cdf_list[2]['values'])]
+             (cdf_list[0]['values'], cdf_list[2]['values'])]
 
 # Compute percentiles
 percentiles = []
@@ -107,7 +150,7 @@ for label, (p10, p90) in zip(period_labels, percentiles):
     print(f"  SPI 90th percentile value = {p90:.3f}, CDF ≈ 0.90\n")
     print()
 
-comparison_periods = ['1971–2000 vs 1981–2010', '1971–2000 vs 1991–2020', '1981–2010 vs 1991–2020']
+comparison_periods = ['1991–2020 vs 2021–2050', '1991–2020 vs 2071–2100']
 Kolmogorov_Smirnov = pd.DataFrame()
 Anderson_Darling = pd.DataFrame()
 for label, pair in zip(comparison_periods, cdf_pairs):
@@ -120,146 +163,60 @@ for label, pair in zip(comparison_periods, cdf_pairs):
                                                                        'critical_values':result.critical_values,
                                                                        'pvalue':result.pvalue})], axis=0)
 
-
 # Plot ECDFs with vertical percentile lines
-plt.figure(figsize=(10, 6))
+cdf10 = pd.read_csv('t24_projectionID3_locationID4445_reference.csv')
+cdf11 = pd.read_csv('t24_projectionID3_locationID4445_near.csv')
+cdf12 = pd.read_csv('t24_projectionID3_locationID4445_far.csv')
+cdf_list_2 = [cdf10, cdf11, cdf12]
 
-for (cdf, label, (p10, p90), color) in zip(cdf_list, period_labels, percentiles, colors):
+cdf00 = pd.read_csv('t24_projectionID1_locationID3726_reference.csv')
+cdf01 = pd.read_csv('t24_projectionID1_locationID3726_near.csv')
+cdf02 = pd.read_csv('t24_projectionID1_locationID3726_far.csv')
+cdf_list_1 = [cdf00, cdf01, cdf02]
 
-    plt.plot(cdf['values'], cdf['cdf'], label=label, color=color, linewidth=1.5)
-    plt.axvline(p10,  linestyle="--", color=color, alpha=0.6)
-    plt.axvline(p90, linestyle="--", color=color, alpha=0.6)
+fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(10, 10), sharex=True)
 
-plt.xlabel("SPI", fontsize=12, fontweight='bold')
-plt.ylabel("Cumulative probability", fontsize=12, fontweight='bold')
-plt.title("SPI-24 CDFs with 5th and 95th percentiles", fontsize=12)
-plt.grid(True)
-plt.legend()
+# ---- FIRST SUBPLOT ----
+ax = axes[0]
+
+for (cdf, label, (p10, p90), color) in zip(cdf_list_1, period_labels, percentiles, colors):
+    ax.plot(cdf['values'], cdf['cdf'], label=label, color=color, linewidth=1.5)
+    ax.axvline(p10, linestyle="--", color=color, alpha=0.6)
+    ax.axvline(p90, linestyle="--", color=color, alpha=0.6)
+
+ax.set_ylabel("Cumulative probability", fontsize=12, fontweight='bold')
+ax.set_title("SPI-24 CDFs RCP8.5-SMHI-RCA4", fontsize=12)
+ax.grid(True)
+ax.legend()
+axes[0].text(
+    0.02, 0.95, "(a)",
+    transform=axes[0].transAxes,
+    fontsize=12,
+    fontweight="bold",
+    va="top"
+)
+
+# ---- SECOND SUBPLOT ----
+ax = axes[1]
+
+for (cdf, label, (p10, p90), color) in zip(cdf_list_2, period_labels, percentiles, colors):
+    ax.plot(cdf['values'], cdf['cdf'], label=label, color=color, linewidth=1.5)
+    ax.axvline(p10, linestyle="--", color=color, alpha=0.6)
+    ax.axvline(p90, linestyle="--", color=color, alpha=0.6)
+
+ax.set_xlabel("SPI", fontsize=12, fontweight='bold')
+ax.set_ylabel("Cumulative probability", fontsize=12, fontweight='bold')
+ax.set_title("SPI-24 CDFs RCP8.5-KNMI-RACMO22E", fontsize=12)
+ax.grid(True)
+ax.legend()
+axes[1].text(
+    0.02, 0.95, "(b)",
+    transform=axes[1].transAxes,
+    fontsize=12,
+    fontweight="bold",
+    va="top"
+)
+
 plt.tight_layout()
 plt.show()
-
-annual_counts = []
-
-five_year_block_counts = []
-
-anchors = [1971, 1981, 1991]
-
-for i, p, anchor in zip(range(0,len(periods)), periods, anchors):
-
-    # ----------------------------------------------------
-    # 1. Define the 5th percentile threshold
-    # ----------------------------------------------------
-    below_5th = p<percentiles[i][0]
-
-    # ----------------------------------------------------
-    # 2. Annual counts of SPI events below the 5th percentile
-    # ----------------------------------------------------
-    # Boolean mask: True when SPI is below the 5th percentile
-    # Count per calendar year
-    annual = below_5th.groupby(below_5th.index.year).sum().astype(int)
-    annual.name = 'count_below_5th'
-    annual_counts.append(annual)
-
-    print("\nAnnual counts of SPI period_{i} < 5th percentile:")
-    print(annual)
-
-    # ----------------------------------------------------
-    # 3. Non-overlapping 5-year block counts of SPI < 5th percentile
-    #    Example blocks: 1980–1984, 1985–1989, ...
-    # ----------------------------------------------------
-    years = below_5th.index.year
-
-    anchor = 1991  # first block starts at 1991–1995
-
-    # Compute block index: 0 for 1991–1995, 1 for 1996–2000, etc.
-    block_index = (years - anchor) // 5
-
-    # Define a "block start year" for each observation, e.g.:
-    # 1980–1984 -> 1980
-    # 1985–1989 -> 1985
-    # 1990–1994 -> 1990, etc.
-    block_start_year = anchor + 5 * block_index
-
-    # Put into a Series for grouping
-    block_counts = below_5th.groupby(block_start_year).sum().astype(int)
-    block_counts.name = 'count_below_5th_5yr_block'
-
-    print("\n5-year block counts of SPI < 5th percentile (non-overlapping):")
-    print(block_counts)
-
-    # ----------------------------------------------------
-    # 4. (Optional) Reformat 5-year block labels as strings "YYYY–YYYY"
-    # ----------------------------------------------------
-    block_counts_labeled = block_counts.copy()
-    block_counts_labeled.index = [
-        f"{start_year}-{start_year+4}" for start_year in block_counts.index
-    ]
-    five_year_block_counts.append(block_counts_labeled)
-
-    print("\n5-year block counts with labeled intervals:")
-    print(block_counts_labeled)
-
-fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(10, 12), constrained_layout=True)
-
-for ax, pl, block_count in zip(axes, period_labels, five_year_block_counts):
-    x_pos = np.arange(len(block_count))
-
-    ax.plot(x_pos, block_count.values, marker='o')
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(block_count.index, rotation=45, ha='right')
-
-    ax.set_title(f"{pl}")
-    ax.set_ylabel("Event count")
-    ax.grid(True, linestyle='--', alpha=0.5)
-
-plt.show()
-
-# Access period IV statistics
-years = ['2021', '2022', '2023', '2024']
-percentiles_IV = pd.DataFrame()
-for year in years:
-    period_year = period_IV[(period_IV.index.year==int(year))]
-    sorted_vals = np.sort(period_year.dropna().values)
-    cdf = np.arange(1, len(sorted_vals)+1) / len(sorted_vals)
-    cdf_list.append(pd.DataFrame(data={'values':sorted_vals, 'cdf':cdf}))
-
-    p10  = np.percentile(sorted_vals, 10)
-    p90 = np.percentile(sorted_vals, 90)
-
-    percentiles_IV = pd.concat([percentiles_IV, pd.DataFrame(data={'Year':year, '10th':p10, '90th':p90, 'CDF':0.10}, index=[year])], axis=0)
-
-    print(f'Year {year}: SPI 10th percentile value = {p10 :.3f}')
-    print(f'Year {year}: SPI 90th percentile value = {p90 :.3f}')
-
-# 7. Plot 2021-2024 over 1991-2020 baseline period.
-
-plt.step(cdf_list[2]['values'], cdf_list[2]['cdf'], where='post', label='1991–2020 CDF', color='tab:blue')
-plt.axvline(percentiles[2][0],  linestyle="--", color='tab:blue', alpha=0.6)
-
-# Recent years on same CDF
-plt.scatter(percentiles_IV["10th"],
-            percentiles_IV['CDF'],
-            label='2021–2024',
-            marker='o',
-            color='tab:orange')
-
-offsets = [(-12,7), (5,-10), (-15,7), (-30,-5)]
-# Annotate each point with its year
-for (_, row), offset in zip(percentiles_IV.iterrows(), offsets):
-    plt.annotate(
-        text=str(row["Year"]),              # text label
-        xy=(row["10th"], row["CDF"]),        # point to label
-        xytext=offset,                      # offset in pixels
-        textcoords="offset points",
-        fontsize=9
-    )
-
-plt.xlabel("SPI-6", fontsize=12, fontweight='bold')
-plt.ylabel("Cumulative Probability", fontsize=12, fontweight='bold')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.show()
-
-
 print()
